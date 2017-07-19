@@ -80,14 +80,21 @@ public class ReactNativeNFCModule extends ReactContextBaseJavaModule implements 
     }
 
     /**
-     * This method is used to check if the device has NFC capabilities.
+     * This method is used to check the status of the NFC adapter.
      *
-     * @param callback callback passed by javascript that gets a boolean
+     * @param callback callback passed by javascript that gets a status
      */
     @ReactMethod
-    public void hasNfc(Callback callback){
+    public void getStatus(Callback callback){
         NfcAdapter nfcAdapter = NfcAdapter.getDefaultAdapter(this.getReactApplicationContext());
-        callback.invoke(nfcAdapter != null);
+        String status = "NA";
+        if(nfcAdapter != null){
+            status = "ON";
+        }
+        if(!nfcAdapter.isEnabled()){
+            status = "OFF";
+        }
+        callback.invoke(status);
         startupNfcData = null;
         startupNfcDataRetrieved = true;
     }
