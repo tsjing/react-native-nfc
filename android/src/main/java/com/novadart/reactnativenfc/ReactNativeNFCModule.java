@@ -80,21 +80,16 @@ public class ReactNativeNFCModule extends ReactContextBaseJavaModule implements 
     }
 
     /**
-     * This method is used to retrieve the NFC data was acquired before the React Native App was loaded.
-     * It should be called only once, when the first listener is attached.
-     * Subsequent calls will return null;
+     * This method is used to check if the device has NFC capabilities.
      *
-     * @param callback callback passed by javascript to retrieve the nfc data
+     * @param callback callback passed by javascript that gets a boolean
      */
     @ReactMethod
-    public void getStartUpNfcData(Callback callback){
-        if(!startupNfcDataRetrieved){
-            callback.invoke(DataUtils.cloneWritableMap(startupNfcData));
-            startupNfcData = null;
-            startupNfcDataRetrieved = true;
-        } else {
-            callback.invoke();
-        }
+    public void hasNfc(Callback callback){
+        NfcAdapter nfcAdapter = NfcAdapter.getDefaultAdapter(this.getReactApplicationContext());
+        callback.invoke(nfcAdapter != null);
+        startupNfcData = null;
+        startupNfcDataRetrieved = true;
     }
 
 
