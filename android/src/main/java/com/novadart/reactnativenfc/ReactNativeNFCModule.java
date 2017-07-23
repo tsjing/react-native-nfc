@@ -3,38 +3,28 @@ package com.novadart.reactnativenfc;
 
 import android.app.Activity;
 import android.content.Intent;
-import android.nfc.NdefMessage;
 import android.nfc.NfcAdapter;
-import android.nfc.Tag;
-import android.os.AsyncTask;
-import android.os.Parcelable;
 import android.support.annotation.Nullable;
 
 import com.facebook.react.bridge.ActivityEventListener;
-import com.facebook.react.bridge.Callback;
 import com.facebook.react.bridge.LifecycleEventListener;
+import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
-import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.modules.core.DeviceEventManagerModule;
-import com.novadart.reactnativenfc.parser.NdefParser;
-import com.novadart.reactnativenfc.parser.TagParser;
 
-public class ReactNativeNFCModule extends ReactContextBaseJavaModule implements ActivityEventListener,LifecycleEventListener {
+public class ReactNativeNFCModule extends ReactContextBaseJavaModule implements ActivityEventListener, LifecycleEventListener {
 
-    private static final String EVENT_NFC_DISCOVERED = "__NFC_DISCOVERED";
+    private static final String EVENT_NFC_DISCOVERED = "DISCOVERED";
+    private static final String EVENT_NFC_ON = "ON";
+    private static final String EVENT_NFC_OFF = "OFF";
 
-    // caches the last message received, to pass it to the listeners when it reconnects
-    private WritableMap startupNfcData;
-    private boolean startupNfcDataRetrieved = false;
-
-    private boolean startupIntentProcessed = false;
+    private NfcAdapter nfcAdapter;
 
     public ReactNativeNFCModule(ReactApplicationContext reactContext) {
         super(reactContext);
         reactContext.addActivityEventListener(this);
-        reactContext.addLifecycleEventListener(this);
     }
 
     @Override
@@ -42,37 +32,58 @@ public class ReactNativeNFCModule extends ReactContextBaseJavaModule implements 
         return "ReactNativeNFC";
     }
 
+    @Override
+    public void onHostResume() {
+        setupForegroundDispatch();
+    }
+
+    @Override
+    public void onHostPause() {
+        if (nfcAdapter != null)
+            stopForegroundDispatch();
+    }
+
+    @Override
+    public void onHostDestroy() {
+    }
+
+
+    public void setupForegroundDispatch() {
+        if(nfcAdapter == null){
+            nfcAdapter = NfcAdapter.getDefaultAdapter(getReactApplicationContext());
+        }
+
+        nfcAdapter.enableForegroundDispatch(getCurrentActivity(), null, null, null);
+    }
+
+    public void stopForegroundDispatch() {
+        nfcAdapter.disableForegroundDispatch(getCurrentActivity());
+    }
 
     @Override
     public void onActivityResult(Activity activity, int requestCode, int resultCode, Intent data) {}
 
     @Override
     public void onNewIntent(Intent intent) {
-        handleIntent(intent,false);
+        handleIntent(intent);
     }
 
-    private void handleIntent(Intent intent, boolean startupIntent) {
+    private void handleIntent(Intent intent) {
         if (intent != null && intent.getAction() != null) {
 
             switch (intent.getAction()){
-
-                case NfcAdapter.ACTION_NDEF_DISCOVERED:
-                    Parcelable[] rawMessages = intent.getParcelableArrayExtra(NfcAdapter.EXTRA_NDEF_MESSAGES);
-
-                    if (rawMessages != null) {
-                        NdefMessage[] messages = new NdefMessage[rawMessages.length];
-                        for (int i = 0; i < rawMessages.length; i++) {
-                            messages[i] = (NdefMessage) rawMessages[i];
-                        }
-                        processNdefMessages(messages,startupIntent);
+                case NfcAdapter.ACTION_ADAPTER_STATE_CHANGED:
+                    if(nfcAdapter.isEnabled()) {
+                        sendEvent(EVENT_NFC_ON, null);
+                    }else{
+                        sendEvent(EVENT_NFC_OFF, null);
                     }
                     break;
 
-                // ACTION_TAG_DISCOVERED is an unlikely case, according to https://developer.android.com/guide/topics/connectivity/nfc/nfc.html
-                case NfcAdapter.ACTION_TAG_DISCOVERED:
                 case NfcAdapter.ACTION_TECH_DISCOVERED:
-                    Tag tag = intent.getParcelableExtra(NfcAdapter.EXTRA_TAG);
-                    processTag(tag,startupIntent);
+                    byte[] id = intent.getByteArrayExtra(NfcAdapter.EXTRA_ID);
+                    String hexId = toHex(id);
+                    sendEvent(EVENT_NFC_DISCOVERED, hexId);
                     break;
 
             }
@@ -81,105 +92,43 @@ public class ReactNativeNFCModule extends ReactContextBaseJavaModule implements 
 
     /**
      * This method is used to check the status of the NFC adapter.
-     *
-     * @param callback callback passed by javascript that gets a status
+     * @param promise for javascript that resolves to a status
      */
     @ReactMethod
-    public void getStatus(Callback callback){
-        NfcAdapter nfcAdapter = NfcAdapter.getDefaultAdapter(this.getReactApplicationContext());
-        String status = "NA";
-        if(nfcAdapter != null){
-            status = "ON";
+    public void getStatus(Promise promise){
+        try {
+            NfcStatusType status = NfcStatusType.NA;
+            if(nfcAdapter != null){
+                status = NfcStatusType.ON;
+            }
+            if(!nfcAdapter.isEnabled()){
+                status = NfcStatusType.OFF;
+            }
+            promise.resolve(status);
+        }catch (Exception e) {
+            promise.reject("Failed to get NFC status", e);
         }
-        if(!nfcAdapter.isEnabled()){
-            status = "OFF";
-        }
-        callback.invoke(status);
-        startupNfcData = null;
-        startupNfcDataRetrieved = true;
     }
 
 
-    private void sendEvent(@Nullable WritableMap payload) {
+    private void sendEvent(String event, @Nullable Object payload) {
         getReactApplicationContext()
                 .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
-                .emit(EVENT_NFC_DISCOVERED, payload); }
-
-
-    private void processNdefMessages(NdefMessage[] messages, boolean startupIntent){
-        NdefProcessingTask task = new NdefProcessingTask(startupIntent);
-        task.execute(messages);
+                .emit(getName() + "/" + event, payload);
     }
 
-    private void processTag(Tag tag, boolean startupIntent){
-        TagProcessingTask task = new TagProcessingTask(startupIntent);
-        task.execute(tag);
-    }
-
-    @Override
-    public void onHostResume() {
-        if(!startupIntentProcessed){
-            if(getReactApplicationContext().getCurrentActivity() != null){ // it shouldn't be null but you never know
-                // necessary because NFC might cause the activity to start and we need to catch that data too
-                handleIntent(getReactApplicationContext().getCurrentActivity().getIntent(),true);
+    private String toHex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = bytes.length - 1; i >= 0; --i) {
+            int b = bytes[i] & 0xff;
+            if (b < 0x10)
+                sb.append('0');
+            sb.append(Integer.toHexString(b));
+            if (i > 0) {
+                sb.append(" ");
             }
-            startupIntentProcessed = true;
         }
+        return sb.toString();
     }
-
-    @Override
-    public void onHostPause() {}
-
-    @Override
-    public void onHostDestroy() {}
-
-
-    private class NdefProcessingTask extends AsyncTask<NdefMessage[],Void,WritableMap> {
-
-        private final boolean startupIntent;
-
-        NdefProcessingTask(boolean startupIntent) {
-            this.startupIntent = startupIntent;
-        }
-
-        @Override
-        protected WritableMap doInBackground(NdefMessage[]... params) {
-            NdefMessage[] messages = params[0];
-            return NdefParser.parse(messages);
-        }
-
-        @Override
-        protected void onPostExecute(WritableMap ndefData) {
-            if(startupIntent) {
-                startupNfcData = ndefData;
-            }
-            sendEvent(ndefData);
-        }
-    }
-
-
-    private class TagProcessingTask extends AsyncTask<Tag,Void,WritableMap> {
-
-        private final boolean startupIntent;
-
-        TagProcessingTask(boolean startupIntent) {
-            this.startupIntent = startupIntent;
-        }
-
-        @Override
-        protected WritableMap doInBackground(Tag... params) {
-            Tag tag = params[0];
-            return TagParser.parse(tag);
-        }
-
-        @Override
-        protected void onPostExecute(WritableMap tagData) {
-            if(startupIntent) {
-                startupNfcData = tagData;
-            }
-            sendEvent(tagData);
-        }
-    }
-
 
 }

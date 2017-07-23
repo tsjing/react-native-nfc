@@ -1,43 +1,18 @@
-'use strict';
+import { NativeModules, DeviceEventEmitter } from "react-native";
 
-import { NativeModules, DeviceEventEmitter } from 'react-native';
+const moduleName = "ReactNativeNFC";
 
-export const NfcDataType = {
-    NDEF : "NDEF",
-    TAG : "TAG"
+export const StatusTypes = {
+  ON: "ON",
+  OFF: "OFF",
+  NA: "NA"
 };
 
-export const NdefRecordType = {
-    TEXT : "TEXT",
-    URI : "URI",
-    MIME : "MIME"
+export const EventTypes = {
+  discovered: moduleName + "/DISCOVERED",
+  on: moduleName + "/ON",
+  off: moduleName + "/OFF"
 };
 
-
-let _registeredToEvents = false;
-const _listeners = [];
-
-let _registerToEvents = () => {
-    if(!_registeredToEvents){
-        NativeModules.ReactNativeNFC.getStartUpNfcData(_notifyListeners);
-        DeviceEventEmitter.addListener('__NFC_DISCOVERED', _notifyListeners);
-        _registeredToEvents = true;
-    }
-};
-
-let _notifyListeners = (data) => {
-    if(data){
-        for(let i in _listeners){
-            _listeners[i](data);
-        }
-    }
-};
-
-const NFC = {};
-
-NFC.addListener = (callback) => {
-    _listeners.push(callback);
-    _registerToEvents();
-};
-
-export default NFC;
+export const getStatus = NativeModules[moduleName].getStatus;
+export const addEventListener = DeviceEventEmitter.addListener;
